@@ -30,18 +30,26 @@ warn() { echo "${C_WARN}WARN: $*${C_END}" >&2; }
 step() { echo "${C_STEP}==> $*${C_END}" >&2; }
 die()  { err "$*"; exit 1; }
 
-usage() { sed -n '2,12p' "$SELF" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,/^[^#]/p' "$SELF" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 resolve_node() {
   if [ -n "${NODE_BIN:-}" ]; then echo "$NODE_BIN"; return; fi
-  local dir
-  dir="$(mise where "node@$NODE_VERSION" 2>/dev/null)" \
+  local mise_bin dir
+  mise_bin="$(command -v mise 2>/dev/null || echo "$HOME/.local/bin/mise")"
+  dir="$("$mise_bin" where "node@$NODE_VERSION" 2>/dev/null)" \
     || die "node $NODE_VERSION introuvable : mise install node@$NODE_VERSION"
   echo "$dir/bin/node"
 }
 
-env_value() { # last assignment of $1 in .env, quotes stripped
-  sed -n "s/^[[:space:]]*$1=//p" "$ENV_FILE" | tail -n1 | sed -e 's/^["'\'']//' -e 's/["'\'']$//'
+env_value() { # last assignment of $1 in .env: optional "export", CR, quotes, trailing comment
+  local line
+  line="$(tr -d '\r' < "$ENV_FILE" | sed -n "s/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}$1=//p" | tail -n1)"
+  case "$line" in
+    \"*) line="${line#\"}"; line="${line%%\"*}" ;;
+    \'*) line="${line#\'}"; line="${line%%\'*}" ;;
+    *) line="$(printf '%s' "$line" | sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//')" ;;
+  esac
+  printf '%s' "$line"
 }
 
 cmd_init() {
@@ -87,26 +95,37 @@ cmd_check() {
     fi
   done
   step "Handshake MCP"
+  local to logf
+  to="$(command -v timeout || command -v gtimeout || true)"
+  [ -n "$to" ] || die "timeout introuvable : brew install coreutils"
+  logf="$(mktemp)"; chmod 600 "$logf"
   handshake="$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"check","version":"0"}}}' \
-    | (cd "$REPO_DIR" && MCP_TRANSPORT=stdio timeout 15 "$node" dist/index.js 2>/dev/null) | head -n1 || true)"
+    | (cd "$REPO_DIR" && MCP_TRANSPORT=stdio "$to" 15 "$node" dist/index.js 2>"$logf") | head -n1 || true)"
   case "$handshake" in
-    *'"serverInfo"'*) ok "serveur MCP opérationnel" ;;
-    *) die "pas de réponse MCP au handshake" ;;
+    *'"serverInfo"'*) rm -f "$logf"; ok "serveur MCP opérationnel" ;;
+    *) err "pas de réponse MCP au handshake ; fin du stderr du serveur :"; tail -n5 "$logf" >&2; rm -f "$logf"; exit 1 ;;
   esac
 }
 
 cmd_register() {
   local dry="$1"
+  local node
   command -v claude >/dev/null || die "CLI claude introuvable"
+  case "$REPO_DIR" in
+    /tmp/*|/private/tmp/*|/var/folders/*)
+      die "checkout temporaire ($REPO_DIR) : enregistrer depuis le clone principal, ce chemin disparaîtra" ;;
+  esac
   validate_env
+  node="$(resolve_node)"; [ -x "$node" ] || die "node absent : $node"
   if [ "$dry" = 1 ]; then
     warn "dry-run : claude mcp remove $MCP_NAME -s $MCP_SCOPE (si présent)"
-    warn "dry-run : claude mcp add $MCP_NAME --scope $MCP_SCOPE -- $SELF run"
+    warn "dry-run : claude mcp add $MCP_NAME --scope $MCP_SCOPE -e NODE_BIN=$node -- $SELF run"
     return
   fi
   claude mcp remove "$MCP_NAME" -s "$MCP_SCOPE" >/dev/null 2>&1 || true
-  claude mcp add "$MCP_NAME" --scope "$MCP_SCOPE" -- "$SELF" run >/dev/null
-  ok "serveur MCP « $MCP_NAME » enregistré ($MCP_SCOPE) : $SELF run"
+  claude mcp add "$MCP_NAME" --scope "$MCP_SCOPE" -e "NODE_BIN=$node" -- "$SELF" run >/dev/null \
+    || die "échec de claude mcp add ; l'ancien enregistrement « $MCP_NAME » a été retiré, relancer task mcp:register"
+  ok "serveur MCP « $MCP_NAME » enregistré ($MCP_SCOPE) : $SELF run (node $node)"
   warn "il sera chargé à la prochaine session Claude Code"
 }
 

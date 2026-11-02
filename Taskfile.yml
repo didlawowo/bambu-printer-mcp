@@ -8,6 +8,8 @@ vars:
   NODE_DIR:
     sh: mise where node@{{.NODE_VERSION}} 2>/dev/null || true
 
+  DRY_RUN: '{{.DRY_RUN | default "0"}}'
+
 env:
   NODE_VERSION: '{{.NODE_VERSION}}'
 
@@ -31,7 +33,7 @@ tasks:
   mcp:init:
     desc: Crée .env depuis .env.example (BAMBU_MODEL=p1s) — DRY_RUN=1 pour simuler
     cmds:
-      - scripts/local-mcp.sh init {{if .DRY_RUN}}--dry-run{{end}}
+      - scripts/local-mcp.sh init {{if eq .DRY_RUN "1"}}--dry-run{{end}}
 
   mcp:check:
     desc: Vérifie .env, les ports de l'imprimante et le handshake MCP (lecture seule)
@@ -41,7 +43,7 @@ tasks:
   mcp:register:
     desc: Enregistre le serveur « bambu » dans Claude Code (scope user) — DRY_RUN=1 pour simuler
     cmds:
-      - scripts/local-mcp.sh register {{if .DRY_RUN}}--dry-run{{end}}
+      - scripts/local-mcp.sh register {{if eq .DRY_RUN "1"}}--dry-run{{end}}
 
   mcp:setup:
     desc: install → mcp:check → mcp:register
