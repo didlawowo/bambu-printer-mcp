@@ -1,0 +1,53 @@
+version: '3'
+
+# Local install of this fork as a Claude Code MCP server.
+# Configuration: .env at the repo root (git-ignored), created by `task mcp:init`.
+
+vars:
+  NODE_VERSION: '{{.NODE_VERSION | default "24.22.2"}}'
+  NODE_DIR:
+    sh: mise where node@{{.NODE_VERSION}} 2>/dev/null || true
+
+  DRY_RUN: '{{.DRY_RUN | default "0"}}'
+
+env:
+  NODE_VERSION: '{{.NODE_VERSION}}'
+
+tasks:
+  default:
+    desc: Liste les tâches
+    cmds: [task --list]
+    silent: true
+
+  install:
+    desc: Installe les dépendances et compile avec node {{.NODE_VERSION}} (mise)
+    preconditions:
+      - sh: test -n "{{.NODE_DIR}}"
+        msg: "node {{.NODE_VERSION}} absent : mise install node@{{.NODE_VERSION}}"
+    env:
+      PATH: '{{.NODE_DIR}}/bin:{{env "PATH"}}'
+    cmds:
+      - '{{.NODE_DIR}}/bin/npm ci --no-audit --no-fund'
+      - '{{.NODE_DIR}}/bin/npm run build'
+
+  mcp:init:
+    desc: Crée .env depuis .env.example (BAMBU_MODEL=p1s) — DRY_RUN=1 pour simuler
+    cmds:
+      - scripts/local-mcp.sh init {{if eq .DRY_RUN "1"}}--dry-run{{end}}
+
+  mcp:check:
+    desc: Vérifie .env, les ports de l'imprimante et le handshake MCP (lecture seule)
+    cmds:
+      - scripts/local-mcp.sh check
+
+  mcp:register:
+    desc: Enregistre le serveur « bambu » dans Claude Code (scope user) — DRY_RUN=1 pour simuler
+    cmds:
+      - scripts/local-mcp.sh register {{if eq .DRY_RUN "1"}}--dry-run{{end}}
+
+  mcp:setup:
+    desc: install → mcp:check → mcp:register
+    cmds:
+      - task: install
+      - task: mcp:check
+      - task: mcp:register
